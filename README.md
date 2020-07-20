@@ -1,3 +1,6 @@
+### Preliminary note
+This is a fork from [PyTorch-ENet](https://github.com/davidtvs/PyTorch-ENet) repo ofr the purpose of an image segmentation project.
+
 # PyTorch-ENet
 
 PyTorch (v1.0.0) implementation of [*ENet: A Deep Neural Network Architecture for Real-Time Semantic Segmentation*](https://arxiv.org/abs/1606.02147), ported from the lua-torch implementation [ENet-training](https://github.com/e-lab/ENet-training) created by the authors.

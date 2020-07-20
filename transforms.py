@@ -92,3 +92,8 @@ class LongTensorToRGBPIL(object):
                 color_tensor[channel].masked_fill_(mask, color_value)
 
         return ToPILImage()(color_tensor)
+
+class RemoveCarPedCycle(object):
+    """custom transform, re-labels pixels of class 8 to 10 as class 12 """
+    def __call__(self,tensor_label):
+        return tensor_label.masked_fill(tensor_label>=8, 11)

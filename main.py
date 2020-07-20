@@ -11,25 +11,61 @@ from PIL import Image
 
 import transforms as ext_transforms
 from models.enet import ENet
+from models.bisenet import BiSeNetv2
 from train import Train
 from test import Test
 from metric.iou import IoU
 from args import get_arguments
 from data.utils import enet_weighing, median_freq_balancing
 import utils
-
+from custom import CustomArgs
 # Get the arguments
-args = get_arguments()
 
-device = torch.device(args.device)
+#args = CustomArgs(resume=False, batch_size=6, print_step=False)
+#args.resume=True
 
+def create_model(args,n_classes):
+    """
+    Creates a model according to:
+        - args.model_type: ENet or BiSeNet
+        - args.dropout: if different from 0 or None, a dropout is done
+    
+    Dropout is done by adding a forward hook to the batch-norm layers. Dropped-
+    out pixels are replaced by the batch norm bias for their channel. It is
+    designed for MC dropout (i.e. even at inference stage) and is always active
+    even after calling model.eval() or model.train(False).
+    
+    Returns a Torch model
+    """
+    if not hasattr(args,"model_type") or args.model_type.lower()=="enet":
+        model = ENet(n_classes)
+    elif args.model_type.lower()=="bisenet":
+        model = BiSeNetv2(3, n_classes, ratio=8)
+    else:
+        raise ValueError("Model type: expected ENet or BiSeNet")
 
-def load_dataset(dataset):
+    if hasattr(args,"dropout") and args.dropout not in [0, None]:
+        utils.add_dropout(model, args.dropout)
+    return model
+
+def load_dataset(dataset, args):
+    """
+    Loads a dataset among CityScape, CamVid and CamVid_8class (i.e. CamVid with
+    car, pedestrian and bicyclist classes merged into unlabeled)
+    Returns:
+        (train_loader, val_loader, test_loader), class_weights, class_encoding
+    """
     print("\nLoading dataset...\n")
 
     print("Selected dataset:", args.dataset)
     print("Dataset directory:", args.dataset_dir)
     print("Save directory:", args.save_dir)
+    device = torch.device(args.device)
+
+    if args.dataset.lower() == 'camvid_8class':
+        label_erase = [lambda img:img.point(lambda x: x if x<8 else 8)]
+    else:
+        label_erase = []
 
     image_transform = transforms.Compose(
         [transforms.Resize((args.height, args.width)),
@@ -37,6 +73,7 @@ def load_dataset(dataset):
 
     label_transform = transforms.Compose([
         transforms.Resize((args.height, args.width), Image.NEAREST),
+        *label_erase,
         ext_transforms.PILToLongTensor()
     ])
 
@@ -81,8 +118,13 @@ def load_dataset(dataset):
 
     # Remove the road_marking class from the CamVid dataset as it's merged
     # with the road class
-    if args.dataset.lower() == 'camvid':
-        del class_encoding['road_marking']
+    if args.dataset.lower() in ['camvid','camvid_8class']:
+        class_encoding.pop('road_marking',None)
+        if args.dataset.lower() == 'camvid_8class':
+            class_encoding.pop('car',None)
+            class_encoding.pop('pedestrian',None)
+            class_encoding.pop('bicyclist',None)
+            
 
     # Get number of classes to predict
     num_classes = len(class_encoding)
@@ -136,13 +178,14 @@ def load_dataset(dataset):
             test_loader), class_weights, class_encoding
 
 
-def train(train_loader, val_loader, class_weights, class_encoding):
+def train(train_loader, val_loader, class_weights, class_encoding, args):
     print("\nTraining...\n")
+    device = torch.device(args.device)
 
     num_classes = len(class_encoding)
 
     # Intialize ENet
-    model = ENet(num_classes).to(device)
+    model = create_model(args,num_classes).to(device)
     # Check if the network architecture is correct
     print(model)
 
@@ -214,10 +257,11 @@ def train(train_loader, val_loader, class_weights, class_encoding):
     return model
 
 
-def test(model, test_loader, class_weights, class_encoding):
+def test(model, test_loader, class_weights, class_encoding, args):
     print("\nTesting...\n")
 
     num_classes = len(class_encoding)
+    device = torch.device(args.device)
 
     # We are going to use the CrossEntropyLoss loss function as it's most
     # frequentely used in classification problems with multiple classes which
@@ -232,11 +276,11 @@ def test(model, test_loader, class_weights, class_encoding):
     metric = IoU(num_classes, ignore_index=ignore_index)
 
     # Test the trained model on the test set
-    test = Test(model, test_loader, criterion, metric, device)
+    test_obj = Test(model, test_loader, criterion, metric, device)
 
     print(">>>> Running test dataset")
 
-    loss, (iou, miou) = test.run_epoch(args.print_step)
+    loss, (iou, miou) = test_obj.run_epoch(args.print_step)
     class_iou = dict(zip(class_encoding.keys(), iou))
 
     print(">>>> Avg. loss: {0:.4f} | Mean IoU: {1:.4f}".format(loss, miou))
@@ -253,8 +297,9 @@ def test(model, test_loader, class_weights, class_encoding):
 
 
 def predict(model, images, class_encoding):
+    device = next(model.parameters()).device
     images = images.to(device)
-
+    
     # Make predictions!
     model.eval()
     with torch.no_grad():
@@ -272,8 +317,14 @@ def predict(model, images, class_encoding):
     utils.imshow_batch(images.data.cpu(), color_predictions)
 
 
-# Run only if this module is being run directly
-if __name__ == '__main__':
+def run_training(args):
+    """
+    Main function: create the model, train it and save a checkpoints each time
+    the validation loss has reached a minimum.
+
+    """
+    
+    device = torch.device(args.device)
 
     # Fail fast if the dataset directory doesn't exist
     assert os.path.isdir(
@@ -286,7 +337,7 @@ if __name__ == '__main__':
             args.save_dir)
 
     # Import the requested dataset
-    if args.dataset.lower() == 'camvid':
+    if args.dataset.lower() in ['camvid', 'camvid_8class']:
         from data import CamVid as dataset
     elif args.dataset.lower() == 'cityscapes':
         from data import Cityscapes as dataset
@@ -295,17 +346,17 @@ if __name__ == '__main__':
         raise RuntimeError("\"{0}\" is not a supported dataset.".format(
             args.dataset))
 
-    loaders, w_class, class_encoding = load_dataset(dataset)
+    loaders, w_class, class_encoding = load_dataset(dataset, args)
     train_loader, val_loader, test_loader = loaders
 
     if args.mode.lower() in {'train', 'full'}:
-        model = train(train_loader, val_loader, w_class, class_encoding)
+        model = train(train_loader, val_loader, w_class, class_encoding, args)
 
     if args.mode.lower() in {'test', 'full'}:
         if args.mode.lower() == 'test':
             # Intialize a new ENet model
             num_classes = len(class_encoding)
-            model = ENet(num_classes).to(device)
+            model = create_model(args, num_classes).to(device)
 
         # Initialize a optimizer just so we can retrieve the model from the
         # checkpoint
@@ -318,4 +369,9 @@ if __name__ == '__main__':
         if args.mode.lower() == 'test':
             print(model)
 
-        test(model, test_loader, w_class, class_encoding)
+        test(model, test_loader, w_class, class_encoding, args)
+
+# Run only if this module is being run directly
+if __name__ == '__main__':
+    args = get_arguments()
+    run_training(args)

@@ -1,8 +1,36 @@
 import torch
+import torch.nn as nn
 import torchvision
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+
+def add_dropout(model, proba):
+    """
+    A dropout after each batch-norm layer
+    Dropped pixels have their values replaced by the BatchNorm bias
+    
+    DIRTY KLUDGE: due to the +/- bias operations, it consumes extra memory. The
+    BatchNorm layers should be replaced in the models, with an extra parameter
+    in the constructor.
+    """
+    def apply_fcn(module):
+        if type(module)==nn.BatchNorm2d:
+            if not hasattr(module, "dropout_proba"):
+                module.register_forward_hook(dropout_hook)
+            module.dropout_proba = proba
+    model.apply(apply_fcn)
+
+
+def dropout_hook(module, input, output):
+    """ Drops each channel with some probability"""
+    batch_size, n_chn, h, w = output.shape
+
+    if hasattr(module, "bias"):
+        bn_bias = module.bias.reshape(1,-1,1,1)    
+        return nn.functional.dropout(output-bn_bias,module.dropout_proba)+bn_bias
+    else:
+        return nn.functional.dropout(output,module.dropout_proba)
 
 
 def batch_transform(batch, transform):
@@ -117,8 +145,10 @@ def load_checkpoint(model, optimizer, folder_dir, filename):
     # Load the stored model parameters to the model instance
     checkpoint = torch.load(model_path)
     model.load_state_dict(checkpoint['state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer'])
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint['optimizer'])
     epoch = checkpoint['epoch']
     miou = checkpoint['miou']
 
     return model, optimizer, epoch, miou
+

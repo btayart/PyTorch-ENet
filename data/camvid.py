@@ -58,7 +58,8 @@ class CamVid(data.Dataset):
                  mode='train',
                  transform=None,
                  label_transform=None,
-                 loader=utils.pil_loader):
+                 loader=utils.pil_loader,
+                 preload=True):
         self.root_dir = root_dir
         self.mode = mode
         self.transform = transform
@@ -67,35 +68,33 @@ class CamVid(data.Dataset):
 
         if self.mode.lower() == 'train':
             # Get the training data and labels filepaths
-            self.train_data = utils.get_files(
-                os.path.join(root_dir, self.train_folder),
-                extension_filter=self.img_extension)
-
-            self.train_labels = utils.get_files(
-                os.path.join(root_dir, self.train_lbl_folder),
-                extension_filter=self.img_extension)
+            datadir = self.train_folder
+            labeldir = self.train_lbl_folder
         elif self.mode.lower() == 'val':
             # Get the validation data and labels filepaths
-            self.val_data = utils.get_files(
-                os.path.join(root_dir, self.val_folder),
-                extension_filter=self.img_extension)
-
-            self.val_labels = utils.get_files(
-                os.path.join(root_dir, self.val_lbl_folder),
-                extension_filter=self.img_extension)
+            datadir = self.val_folder
+            labeldir = self.val_lbl_folder
         elif self.mode.lower() == 'test':
             # Get the test data and labels filepaths
-            self.test_data = utils.get_files(
-                os.path.join(root_dir, self.test_folder),
-                extension_filter=self.img_extension)
-
-            self.test_labels = utils.get_files(
-                os.path.join(root_dir, self.test_lbl_folder),
-                extension_filter=self.img_extension)
+            datadir = self.test_folder
+            labeldir = self.test_lbl_folder
         else:
             raise RuntimeError("Unexpected dataset mode. "
                                "Supported modes are: train, val and test")
+            
+        self.data_files = utils.get_files(
+            os.path.join(root_dir, datadir),
+            extension_filter=self.img_extension)
 
+        self.label_files = utils.get_files(
+            os.path.join(root_dir, labeldir),
+            extension_filter=self.img_extension)
+        
+        self.preload=preload
+        if preload:
+            self.data = [self.transform_pair(*self.loader(*path)) 
+                for path in zip(self.data_files, self.label_files)]
+        
     def __getitem__(self, index):
         """
         Args:
@@ -106,21 +105,16 @@ class CamVid(data.Dataset):
         of the image.
 
         """
-        if self.mode.lower() == 'train':
-            data_path, label_path = self.train_data[index], self.train_labels[
-                index]
-        elif self.mode.lower() == 'val':
-            data_path, label_path = self.val_data[index], self.val_labels[
-                index]
-        elif self.mode.lower() == 'test':
-            data_path, label_path = self.test_data[index], self.test_labels[
-                index]
-        else:
-            raise RuntimeError("Unexpected dataset mode. "
-                               "Supported modes are: train, val and test")
+        if self.preload:
+            return self.data[index]
+        
+        data_path, label_path = self.data_files[index], self.label_files[
+            index]
 
         img, label = self.loader(data_path, label_path)
+        return self.transform_pair(img, label)
 
+    def transform_pair(self, img, label):
         if self.transform is not None:
             img = self.transform(img)
 
@@ -131,12 +125,6 @@ class CamVid(data.Dataset):
 
     def __len__(self):
         """Returns the length of the dataset."""
-        if self.mode.lower() == 'train':
-            return len(self.train_data)
-        elif self.mode.lower() == 'val':
-            return len(self.val_data)
-        elif self.mode.lower() == 'test':
-            return len(self.test_data)
-        else:
-            raise RuntimeError("Unexpected dataset mode. "
-                               "Supported modes are: train, val and test")
+        return len(self.data_files)
+            
+    
