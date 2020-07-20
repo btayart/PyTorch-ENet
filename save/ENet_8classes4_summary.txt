@@ -1,0 +1,27 @@
+ARGUMENTS
+batch_size: 6
+dataset: camvid_8class
+dataset_dir: data/camvid
+device: cuda
+dropout: None
+epochs: 300
+height: 360
+ignore_unlabeled: True
+imshow_batch: True
+learning_rate: 0.0005
+lr_decay: 0.1
+lr_decay_epochs: 100
+mode: train
+model_type: ENet
+name: ENet_8classes4
+print_step: False
+resume: False
+save_dir: save
+weighing: ENet
+weight_decay: 0.002
+width: 480
+workers: 4
+
+BEST VALIDATION
+Epoch: 110
+Mean IoU: 0.7098324303419927

@@ -1,0 +1,27 @@
+ARGUMENTS
+batch_size: 16
+dataset: camvid_8class
+dataset_dir: data/camvid
+device: cuda
+dropout: 0.15
+epochs: 300
+height: 360
+ignore_unlabeled: True
+imshow_batch: True
+learning_rate: 0.0005
+lr_decay: 0.1
+lr_decay_epochs: 100
+mode: train
+model_type: BiSeNet
+name: BiSeNet_dropout
+print_step: False
+resume: False
+save_dir: save
+weighing: ENet
+weight_decay: 0.005
+width: 480
+workers: 4
+
+BEST VALIDATION
+Epoch: 200
+Mean IoU: 0.7064606623353822
